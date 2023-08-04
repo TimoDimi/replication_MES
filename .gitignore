@@ -1,6 +1,6 @@
 # excluded data files
-/applications/data-raw/BubbleEpisodes.xlsx
-/applications/data-raw/data_bubbles.rds
+/applications/data_raw/BubbleEpisodes.xlsx
+/applications/data/data_bubbles.rds
 
 
 # History files
