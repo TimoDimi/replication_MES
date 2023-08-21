@@ -36,7 +36,10 @@ data_GDP_weights <- data_GDP_hlp %>%
   dplyr::select(Date, Country, GDPrel) %>%
   rename(GDPweights = GDPrel)
   
-
+# Display average weights:
+data_GDP_weights %>% 
+  group_by(Country) %>%
+  summarize(mean(GDPweights))
 
 # Generate data frame with absolute GDP growth rates
 data_GaR_GDPrel_hlp <- data_GaR %>%
@@ -135,10 +138,11 @@ df_ES <- SRM_ES$data %>%
   as_tibble()
 
 
+tol <- 1e-5 # Tolerance for rounding errors
 df_MES <- sapply(SRM_est_list, 
                  function(SRM_obj){SRM_obj %>% 
                      .[["data"]] %>% 
-                     dplyr::mutate(VaR_violation=(x > VaR)) %>%
+                     dplyr::mutate(VaR_violation=(x > VaR - tol)) %>%
                      dplyr::select(Date, VaR_violation, y, risk_measure) %>%
                      dplyr::rename(value=risk_measure,
                                    return=y) %>%
@@ -187,5 +191,11 @@ p_ES
 
 ggsave("applications/output/MES_GDPgrowth.pdf", width = 8, height = 6, units = "in")
 
+
+# Show VaR exceedances
+df_plot %>% 
+  group_by(Country) %>% 
+  summarize(sum(`VaR Exceedance`),
+            mean(`VaR Exceedance`))
 
 
