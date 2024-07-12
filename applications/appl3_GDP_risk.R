@@ -1,13 +1,19 @@
+rm(list = ls())
+
 library(dplyr)
 library(tidyverse)
 library(tsibble)
+library(xts)
 library(lubridate)
 library(SystemicRisk)
+
+# Load function to convert DCC modes to systemic risk forecasts
+source("applications/DCC_to_SystemicRisk.R")
+
 
 # Set some options
 countries_list <-  c("DEU","FRA","GBR")
 beta <- 0.9
-
 
 # Load data frames
 data_GaR <- readRDS("applications/data/data_GaR.rds")
@@ -197,5 +203,203 @@ df_plot %>%
   group_by(Country) %>% 
   summarize(sum(`VaR Exceedance`),
             mean(`VaR Exceedance`))
+
+
+
+
+
+
+
+
+
+
+
+
+#### DCC GARCH model and Plots
+
+# DCC GARCH specifications
+GARCH11_norm_spec <- ugarchspec(mean.model = list(armaOrder = c(1,1), include.mean=FALSE),
+                                variance.model = list(garchOrder = c(1,1), model = "sGARCH"),
+                                distribution.model = "norm")
+DCC_spec <- dccspec(uspec = multispec(replicate(4, GARCH11_norm_spec)), dccOrder = c(1,1), distribution = "mvnorm")
+
+# DCC fit
+set.seed(2023)
+DCC_fit_GDP <- dccfit(DCC_spec, 
+                      data = data_fit %>% select(Date, Region, DEU, FRA, GBR) %>% as.xts,
+                      fit.control = list(eval.se = FALSE, stationarity = TRUE, scale = FALSE))
+
+# MES from DCC
+H_GDP <- rcov(DCC_fit_GDP)
+Sigma_GDP <- sapply(1:dim(H_GDP)[3], function(i) pracma::sqrtm(H_GDP[,,i])$B, simplify = "array")
+
+
+# Preliminary save of DCC MES results...
+DCC_risk_measure_df <- tibble(Date=data_fit$Date)
+
+for (country in c("DEU", "FRA", "GBR")){
+  vector_index_country <- c("DEU"=2, "FRA"=3, "GBR"=4)
+  index_country <- vector_index_country[country]
+  
+  # Contribution to the MES without the ARMA part
+  DCC_risk_measures_woARMA <- sapply(1:dim(H_GDP)[3], 
+                                  function(i) DCC_to_CoVaR(Sigma_FC=Sigma_GDP[c(1,index_country),c(1,index_country),i], nu=10^4, data_IS=NULL, alpha=0.5, beta=beta),
+                                  simplify = "array")
+  #Manually add ES forecasts
+  DCC_risk_measures_woARMA <- rbind(DCC_risk_measures_woARMA,
+                                    as.numeric(DCC_risk_measures_woARMA[1,]) * dnorm(qnorm(beta))/(1-beta) / qnorm(beta))
+  
+  # Add to data frame and add ARMA part
+  DCC_risk_measure_df <- DCC_risk_measure_df %>% 
+    mutate(!!paste0("MES_",country) := as.numeric(DCC_risk_measures_woARMA[2,]) + as.numeric(fitted(DCC_fit_GDP)[,country]),
+           VaR_Region = as.numeric(DCC_risk_measures_woARMA[1,]) + as.numeric(fitted(DCC_fit_GDP)[,"Region"]),
+           ES_Region = as.numeric(DCC_risk_measures_woARMA[4,]) + as.numeric(fitted(DCC_fit_GDP)[,"Region"]))
+}
+
+
+DCC_risk_measure_df2 <- 
+  DCC_risk_measure_df %>% 
+  rename("MES_Germany"="MES_DEU",
+         "MES_France"="MES_FRA",
+         "MES_United Kingdom"="MES_GBR",
+         "VaR_Joint Economic Region"="VaR_Region",
+         "ES_Joint Economic Region"="ES_Region") %>%
+  pivot_longer(cols=!Date,
+               values_to="value",
+               names_to=c("Risk Measure","Country"),
+               names_pattern = "(.*)_(.*)") %>%
+  filter(Date >= "1995-04-01")
+
+
+
+# Join with MES reg data frame
+df_plot_DCC <- bind_rows(df_plot %>% mutate(Model="MESreg"), 
+                         DCC_risk_measure_df2 %>% mutate(Model="DCC"))
+
+
+# Arrange facets and legend orders
+df_plot_DCC$Country <- factor(df_plot_DCC$Country, 
+                              levels=c("Joint Economic Region", "Germany", "France", "United Kingdom"),
+                              labels=c("Joint Economic Region", "Germany", "France", "United Kingdom"))
+
+df_plot_DCC$`Risk Measure` <- factor(df_plot_DCC$`Risk Measure`, 
+                                     levels=c("VaR", "ES", "MES"))
+
+df_plot_DCC$Model <- factor(df_plot_DCC$Model, 
+                            levels=c("MESreg", "DCC"),
+                            labels=c("MES regression", "DCC-GARCH"))
+
+
+p_MES_DCC <- ggplot(df_plot_DCC %>% arrange(Country, `VaR Exceedance`)) +
+  ggplot2::geom_point(aes(x=Date, y=return, color=`VaR Exceedance`)) +
+  ggplot2::scale_colour_manual(values = c("grey", "black"), na.translate = F) +
+  ggnewscale::new_scale_color() + # For two color scales!!!
+  ggplot2::geom_line(aes(x=Date, y=value, color=`Risk Measure`, linetype=Model)) +
+  ggplot2::scale_colour_manual(values = c("VaR"=gg_color_hue(3)[3], "ES"=gg_color_hue(3)[2], "MES"=gg_color_hue(3)[1])) +
+  ggplot2::scale_linetype_manual(values = c("MES regression"="solid", "DCC-GARCH"="dashed")) +
+  ggplot2::facet_wrap(~Country, ncol=2) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(legend.position="bottom") +
+  ggplot2::ylab("Negative GDP Growth")
+
+p_MES_DCC
+
+ggsave("applications/output/MES_DCC_GDPgrowth.pdf", width = 10, height = 7, units = "in")
+
+
+
+
+
+
+
+#### Model Diagnostics
+
+for (country_select in c("DEU", "FRA", "GBR")){
+    
+  # MES regression generalized residuals
+  df_ResidDiag_MESreg <- SRM_est_list[[country_select]]$data %>%
+    tail(-1) %>%
+    select(Date,x,y,VaR,risk_measure) %>%
+    rename(MES=risk_measure) %>%
+    mutate(GenResid_VaR = (x<=VaR) - beta,
+           GenResid_MES_zeros = (x>VaR)*(MES-y),
+           GenResid_MES = na_if(GenResid_MES_zeros, (x>VaR)),
+           model="MESreg") %>%
+    as_tibble
+  
+  
+  # DCC generalized residuals
+  df_ResidDiag_DCC <- DCC_risk_measure_df %>%
+    full_join(data_fit %>% select(-FCI), by="Date") %>%
+    tail(-1) %>%
+    rename(all_of(c(x="Region", y=paste(country_select), VaR="VaR_Region", MES=paste0("MES_",country_select)))) %>%
+    select(Date,x,y,VaR,MES) %>%
+    mutate(GenResid_VaR = (x<=VaR) - beta,
+           GenResid_MES_zeros = (x>VaR)*(MES-y),
+           GenResid_MES = na_if(GenResid_MES_zeros, (x>VaR)),
+           model="DCC") %>%
+    as_tibble()
+  
+  
+  
+  ### Join MESreg, DCC and BRS data frames  
+  df_ResidDiag <- bind_rows(df_ResidDiag_MESreg, df_ResidDiag_DCC) %>%
+    arrange(Date, model)
+  
+  
+  # Edit the data frame such that it fits in our plotting routine.
+  df_joint_plot <- bind_rows(df_ResidDiag %>% 
+                               select(Date, model, MES, GenResid_MES) %>%
+                               filter(model %in% c("DCC", "MESreg")) %>%
+                               rename(GenResid = GenResid_MES, Prediction = MES) %>%
+                               mutate(model=case_when(model=="DCC" ~ "MES_DCC",
+                                                      model=="MESreg" ~ "MES_MESreg")),
+                             df_ResidDiag %>% 
+                               select(Date, model, VaR, GenResid_VaR) %>%
+                               filter(model %in% c("DCC", "MESreg")) %>%
+                               rename(GenResid = GenResid_VaR, Prediction = VaR) %>%
+                               mutate(model=case_when(model=="DCC" ~ "VaR_DCC",
+                                                      model=="MESreg" ~ "VaR_MESreg"))
+  )  %>% 
+    tidyr::drop_na(GenResid)
+  
+  
+  
+  
+  # Tune facet labels
+  df_joint_plot$model <- factor(df_joint_plot$model,
+                                levels=c("VaR_MESreg", "MES_MESreg", "VaR_DCC", "MES_DCC"),
+                                labels=c("VaR Regression", "MES Regression", "VaR DCC-GARCH", "MES DCC-GARCH"))
+  
+  p_Date <- ggplot(df_joint_plot, aes(x=Date, y=GenResid)) +
+    facet_wrap(~model, scales="free", nrow=1) +
+    geom_point() + 
+    geom_smooth(method="loess", fill="blue") + 
+    geom_hline(yintercept=0) + 
+    theme_bw() +
+    # theme(aspect.ratio=1) +
+    ylab("Generalized Residuals") +
+    xlab("Date") 
+  
+  ggsave(paste0("applications/output/GDP_Diagnostics_Date_",country_select,".pdf"), 
+         p_Date, width = 12, height = 3, units = "in")
+  
+  
+  p_FC <- ggplot(df_joint_plot, aes(x=Prediction, y=GenResid)) +
+    facet_wrap(~model, scales="free", nrow=1) +
+    geom_point() + 
+    geom_smooth(method="loess", fill="blue") + 
+    geom_hline(yintercept=0) + 
+    theme_bw() +
+    # theme(aspect.ratio=1) +
+    ylab("Generalized Residuals") +
+    xlab("Model Predictions") 
+  
+  ggsave(paste0("applications/output/GDP_Diagnostics_Predictions_",country_select,".pdf"), 
+         p_FC, width = 12, height = 3, units = "in")
+  
+}
+  
+
 
 

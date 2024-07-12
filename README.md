@@ -8,8 +8,8 @@
 
 The code in this repository generates the results of the simulations and
 the empirical applications of the working paper Dimitriadis, T. and
-Hoga, Y. (2023), Regressions under Adverse Conditions, available on
-[arXiv](?).
+Hoga, Y. (2024), Regressions under Adverse Conditions, available on
+[arXiv](https://arxiv.org/abs/2311.13327).
 
 ## Data Availability
 
