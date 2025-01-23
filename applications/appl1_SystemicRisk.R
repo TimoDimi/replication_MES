@@ -219,7 +219,7 @@ df_MESBRSreg_plot <- MES_obj_list[[asset_plot]]$data %>%
 # Assign factor for nicer names and ordering
 df_MESBRSreg_plot$Method <- factor(df_MESBRSreg_plot$Method,
                                    levels=c("MES_reg", "BRS_reg"),
-                                   labels=c("MES Regression", "BRS Regression"))
+                                   labels=c("MES Regression", "Ad Hoc MES Regression"))
 
 
 # Plot the BRS and MES regression (in-sample) predictions
@@ -260,7 +260,7 @@ df_MESBRSreg_plot <- MES_obj_list[[asset_plot]]$data %>%
 # Assign factor for nicer names and ordering
 df_MESBRSreg_plot$Method <- factor(df_MESBRSreg_plot$Method,
                                    levels=c("MES_reg", "BRS_reg", "MES_DCC"),
-                                   labels=c("MES Regression", "BRS Regression", "DCC-GARCH"))
+                                   labels=c("MES Regression", "Ad Hoc MES Regression", "DCC-GARCH"))
 
 
 # Plot the BRS and MES regression (in-sample) predictions
@@ -275,7 +275,7 @@ ggplot(df_MESBRSreg_plot) +
   ylab("Negative BAC Return") +
   coord_cartesian(ylim=c(-10,30))
 
-ggsave("applications/output/MES_BRS_DCC_regressions.pdf", width = 8, height = 4.5, units = "in")
+ggsave("applications/output/MES_BRS_DCC_regressions.pdf", width = 9, height = 4.5, units = "in")
 
 
 
@@ -373,7 +373,7 @@ df_joint_plot <- bind_rows(df_ResidDiag %>%
 # Tune facet labels
 df_joint_plot$model <- factor(df_joint_plot$model,
                               levels=c("VaR_MESreg", "MES_MESreg", "MES_BRSreg"),
-                              labels=c("VaR Regression", "MES Regression", "BRS Regression"))
+                              labels=c("VaR Regression", "MES Regression", "Ad Hoc MES Regression"))
 
 p_Date <- ggplot(df_joint_plot, aes(x=Date, y=GenResid)) +
   facet_wrap(~model, scales="free") +
@@ -419,9 +419,9 @@ df_plot_BRScomp <- df_ResidDiag %>%
 
 
 # Tune facet labels
-df_plot_BRScomp$model <- factor(df_joint_plot$model,
-                              levels=c("MES_BRSreg_Qrolling", "MES_BRSreg_Qregression"),
-                              labels=c("BRS Regression with the rolling quantile", "BRS Regression with quantile regression" ))
+df_plot_BRScomp$model <- factor(df_plot_BRScomp$model,
+                                levels=c("MES_BRSreg_Qrolling", "MES_BRSreg_Qregression"),
+                                labels=c("Ad Hoc MES regression with the rolling quantile", "Ad Hoc MES regression with quantile regression" ))
 
 p_Date_BRScomp  <- ggplot(df_plot_BRScomp, aes(x=Date, y=GenResid)) +
   facet_wrap(~model, scales="free") +

@@ -112,8 +112,10 @@ for (country in countries_list){
 }
 
 
-# Compare with a two-step ES regression
+### Compare with a two-step ES regression
 set.seed(2023)
+
+# Unconstraint ES optimization
 SRM_ES <- SRM(data=tsibble_fit %>% mutate(y=x),
               model = "joint_linear",
               risk_measure="MES",
@@ -121,6 +123,33 @@ SRM_ES <- SRM(data=tsibble_fit %>% mutate(y=x),
               optim_replications=c(3,10)) 
 
 summary(SRM_ES)
+
+
+# Constraint ES optimization
+
+# Second step ES opjective function
+ES_twostep_loss <- function(theta, df_SRM_ES){
+  model <- theta[1] + lag(df_SRM_ES$FCI) * theta[2] + lag(df_SRM_ES$Regionlag) * theta[3]
+  0.5 * (df_SRM_ES$x - model)^2 * (df_SRM_ES$x >= df_SRM_ES$VaR)
+}
+
+# Pertubed unconstraint QR estimates as starting values such that they are in the interior of the feasible parameter space
+theta_init <- SRM_ES$theta[1:3] + c(0.05,0,0)  
+
+# Linear ineqaulity constraints
+ui_constOpt <- SRM_ES$data %>% as_tibble()  %>% select(Intercept, FCI, Regionlag) %>% as.matrix() %>% head(-1)
+ci_constOpt <- tail(SRM_ES$data$VaR, -1)
+
+# Constraint optimization
+val_constOpt <-  constrOptim(theta=theta_init,
+                             f=function(theta,...){
+                               mean(ES_twostep_loss(theta,...), na.rm=TRUE)},
+                             grad=NULL,
+                             ui = ui_constOpt,
+                             ci=ci_constOpt,
+                             df_SRM_ES=SRM_ES$data)
+
+ES_pred <- ui_constOpt %*% val_constOpt$par
 
 
 # Print the MES coefficients
@@ -135,11 +164,12 @@ SRM_df %>%
 # Joint plot of in-sample fits
 df_ES <- SRM_ES$data %>%
   dplyr::mutate(VaR_violation=(x > VaR),
-                Country="Joint Economic Region") %>%
-  dplyr::select(Date, Country, VaR_violation, x, VaR, risk_measure) %>%
-  dplyr::rename(ES=risk_measure,
+                Country="Joint Economic Region",
+                ES=c(NA,ES_pred)) %>%
+  dplyr::select(Date, Country, VaR_violation, x, VaR, risk_measure, ES) %>%
+  dplyr::rename(ES_unconstr=risk_measure,
                 return=x) %>%
-  pivot_longer(cols=c(VaR,ES), names_to="risk_measure") %>%
+  pivot_longer(cols=c(VaR,ES_unconstr,ES), names_to="risk_measure") %>%
   dplyr::rename("VaR Exceedance" = "VaR_violation") %>%
   as_tibble()
 
@@ -160,7 +190,7 @@ df_MES <- sapply(SRM_est_list,
                    
 
                    
-df_plot <- bind_rows(df_ES, df_MES) %>% 
+df_plot <- bind_rows(df_ES %>% filter(risk_measure %in% c("VaR", "ES")), df_MES) %>% 
   na.omit() %>%
   dplyr::rename("Risk Measure" = "risk_measure")
 
